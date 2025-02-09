@@ -77,7 +77,7 @@ func main() {
 		}
 
 		// Write the path and content to the output file
-		_, err = fmt.Fprintf(outputFile, "// %s\n%s\n\n", relPath, string(content))
+		_, err = fmt.Fprintf(outputFile, "/== %s\n%s\n\n", relPath, string(content))
 		if err != nil {
 			return fmt.Errorf("error writing to output file: %v", err)
 		}
