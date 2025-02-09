@@ -10,12 +10,23 @@ import (
 )
 
 type Config struct {
-	sourcePath string
-	outputPath string
+	sourcePath    string
+	outputPath    string
+	separator     string
+	skipFolders   string
+	skipFolderMap map[string]bool
 }
 
 func main() {
 	config := parseFlags()
+
+	// Process skip folders into a map for faster lookup
+	config.skipFolderMap = make(map[string]bool)
+	if config.skipFolders != "" {
+		for _, folder := range strings.Split(config.skipFolders, ",") {
+			config.skipFolderMap[strings.TrimSpace(folder)] = true
+		}
+	}
 
 	// Validate source path exists
 	if _, err := os.Stat(config.sourcePath); os.IsNotExist(err) {
@@ -39,12 +50,30 @@ func main() {
 	}
 
 	fmt.Printf("Processing directory: %s\n", absSourcePath)
-	fmt.Printf("Output file: %s\n\n", config.outputPath)
+	fmt.Printf("Output file: %s\n", config.outputPath)
+	if len(config.skipFolderMap) > 0 {
+		fmt.Printf("Skipping folders: %s\n", config.skipFolders)
+	}
+	fmt.Println()
 
 	// Walk through the directory
 	err = filepath.Walk(config.sourcePath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing path %s: %v", path, err)
+		}
+
+		// Get relative path for cleaner output and checking skip folders
+		relPath, err := filepath.Rel(config.sourcePath, path)
+		if err != nil {
+			relPath = path // Fallback to full path if relative path fails
+		}
+
+		// Check if this path should be skipped
+		if shouldSkip(relPath, config.skipFolderMap) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		// Skip the output file itself and hidden files/directories
@@ -70,14 +99,8 @@ func main() {
 			return nil
 		}
 
-		// Get relative path for cleaner output
-		relPath, err := filepath.Rel(config.sourcePath, path)
-		if err != nil {
-			relPath = path // Fallback to full path if relative path fails
-		}
-
-		// Write the path and content to the output file
-		_, err = fmt.Fprintf(outputFile, "/== %s\n%s\n\n", relPath, string(content))
+		// Write the path and content to the output file using the specified separator
+		_, err = fmt.Fprintf(outputFile, "%s %s\n%s\n\n", config.separator, relPath, string(content))
 		if err != nil {
 			return fmt.Errorf("error writing to output file: %v", err)
 		}
@@ -94,20 +117,33 @@ func main() {
 	fmt.Println("\nSuccessfully created project documentation!")
 }
 
+func shouldSkip(path string, skipFolders map[string]bool) bool {
+	parts := strings.Split(path, string(os.PathSeparator))
+	for i := range parts {
+		if skipFolders[parts[i]] {
+			return true
+		}
+	}
+	return false
+}
+
 func parseFlags() Config {
 	config := Config{}
 
 	// Define command line flags
 	flag.StringVar(&config.sourcePath, "source", ".", "Source directory path to process")
 	flag.StringVar(&config.outputPath, "output", "project.md", "Output markdown file path")
+	flag.StringVar(&config.separator, "separator", "/==", "Path separator symbol (default: /==)")
+	flag.StringVar(&config.skipFolders, "skip", "", "Comma-separated list of folders to skip (e.g., 'node_modules,vendor,build')")
 
 	// Add custom usage message
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "\nExample:\n")
+		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  %s -source ./myproject -output docs/project.md\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -source ./myproject -separator '/**' -skip 'node_modules,vendor'\n", os.Args[0])
 	}
 
 	flag.Parse()
@@ -117,7 +153,6 @@ func parseFlags() Config {
 func isSkippableFile(ext string) bool {
 	// List of extensions to skip
 	skipExtensions := map[string]bool{
-		".git":   true,
 		".exe":   true,
 		".dll":   true,
 		".so":    true,
